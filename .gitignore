@@ -1,0 +1,18 @@
+@'
+.env
+.env.*
+!.env.example
+
+node_modules/
+generated/
+
+__pycache__/
+*.pyc
+
+flutter_app/.dart_tool/
+flutter_app/build/
+
+*.pem
+*.key
+IOT_DEV
+'@ | Add-Content .gitignore

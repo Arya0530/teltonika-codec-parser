@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Device {
+  id          Int      @id @default(autoincrement())
+  imei        String   @unique @db.VarChar(30)
+  deviceName  String?  @map("device_name") @db.VarChar(100)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  processedAvls ProcessedAvl[]
+  dailyReports   DailyReport[]
+
+  @@map("devices")
+}
+
+model ProcessedAvl {
+  id          Int      @id @default(autoincrement())
+  deviceId    Int      @map("device_id")
+  timestamp   DateTime
+  latitude    Float
+  longitude   Float
+  speed       Int
+  status      String   @db.VarChar(20)
+  priority    Int
+  altitude    Int
+  angle       Int
+  satellites  Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  device Device @relation(fields: [deviceId], references: [id])
+
+  @@index([deviceId])
+  @@index([timestamp])
+  @@map("processed_avl")
+}
+
+model DailyReport {
+  id              Int      @id @default(autoincrement())
+  deviceId         Int      @map("device_id")
+  reportDate       DateTime @map("report_date")
+  totalData        Int      @default(0) @map("total_data")
+  totalMoving      Int      @default(0) @map("total_moving")
+  totalIdle        Int      @default(0) @map("total_idle")
+  totalOverspeed   Int      @default(0) @map("total_overspeed")
+  avgSpeed         Float    @default(0) @map("avg_speed")
+  maxSpeed         Int      @default(0) @map("max_speed")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  device Device @relation(fields: [deviceId], references: [id])
+
+  @@index([deviceId])
+  @@index([reportDate])
+  @@map("daily_reports")
+}

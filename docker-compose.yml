@@ -1,0 +1,166 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: teltonika-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: iot_teltonika
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - teltonika_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d iot_teltonika"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  prisma-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.prisma
+    container_name: teltonika-prisma-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: >-
+        postgresql://postgres:admin@postgres:5432/iot_teltonika?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-server
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: teltonika
+      RABBITMQ_DEFAULT_PASS: teltonika123
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse-server
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: raw_telemetry
+      CLICKHOUSE_USER: arya
+      CLICKHOUSE_PASSWORD: 123456
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./docker/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user arya --password 123456 --query 'SELECT 1'"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  go-parser:
+    build:
+      context: ./go-parser
+    container_name: teltonika-go-parser
+    restart: unless-stopped
+    environment:
+      TCP_PORT: "50020"
+      POSTGRES_URL: >-
+        postgres://postgres:admin@postgres:5432/iot_teltonika?sslmode=disable
+      RABBITMQ_URL: >-
+        amqp://teltonika:teltonika123@rabbitmq:5672/
+    ports:
+      - "50020:50020"
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  py-consumer:
+    build:
+      context: ./py-aggregator
+    container_name: teltonika-py-consumer
+    restart: unless-stopped
+    command: ["python", "main.py"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: teltonika
+      RABBITMQ_PASSWORD: teltonika123
+      CLICKHOUSE_URL: >-
+        http://clickhouse:8123/?user=arya&password=123456
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  py-cronjob:
+    build:
+      context: ./py-aggregator
+    container_name: teltonika-py-cronjob
+    restart: unless-stopped
+    command: ["python", "scheduler.py"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CLICKHOUSE_URL: >-
+        http://clickhouse:8123/?user=arya&password=123456
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: iot_teltonika
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      CRON_INTERVAL_SECONDS: "300"
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+
+  api-server:
+    build:
+      context: ./api-server
+    container_name: teltonika-api
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: iot_teltonika
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "8000:8000"
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
+
+volumes:
+  teltonika_postgres_data:
+  rabbitmq_data:
+  clickhouse_data:
