@@ -1,12 +1,23 @@
-# Gunakan OS Linux versi ringan yang sudah ada Golang-nya
-FROM golang:1.26-alpine
+FROM golang:alpine AS builder
 
 WORKDIR /app
 
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY . .
 
-# Build (compile) kode Go menjadi program aplikasi
-RUN go build -o parser-app .
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build -o teltonika-server .
 
-# Jalankan aplikasinya
-CMD ["./parser-app"]
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder \
+    /app/teltonika-server \
+    /app/teltonika-server
+
+EXPOSE 50020
+
+CMD ["/app/teltonika-server"]
